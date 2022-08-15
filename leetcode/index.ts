@@ -181,6 +181,7 @@ exports.main = async function (ctx: FunctionContext) {
             await makeACCard({
               ...checkResult,
               username: user.data.user.name,
+              uid: sender.sender_id.user_id,
               rank,
             }),
             'interactive'
@@ -254,14 +255,14 @@ sleep = function (t) {
 
 judgeLanguage = (code) => {
   if (/func\s/.test(code)) return 'golang'
-  if (/class Solution:/.test(code)) return 'python3'
+  if (/class OrderedStream:/.test(code)) return 'python3'
   if (/def\s/.test(code)) return 'python'
   if (/public:/.test(code)) return 'cpp'
-  if (/public class  Solution\{/.test(code)) return 'csharp'
-  if (/class Solution[\s\S]*public/.test(code)) return 'java'
-  if (/class Solution \{/.test(code)) return 'php'
+  if (/public class  OrderedStream\{/.test(code)) return 'csharp'
+  if (/class OrderedStream[\s\S]*public/.test(code)) return 'java'
+  if (/class OrderedStream \{/.test(code)) return 'php'
   if (/@param/.test(code)) return 'javascript'
-  if (/impl Solution/.test(code)) return 'rust'
+  if (/impl OrderedStream/.test(code)) return 'rust'
   if (/(char|boolean|int)/.test(code)) return 'c'
 
   return ''
