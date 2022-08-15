@@ -205,6 +205,8 @@ exports.main = async function (ctx: FunctionContext) {
           )
         }
       }
+
+      // 2.0 副本模式
       if (message.chat_type === 'group') {
         const difficulty = msg.match(/(easy|medium|hard)/g)?.[0]
         const limit = msg.match(/\d+/g)?.[1]
@@ -212,7 +214,7 @@ exports.main = async function (ctx: FunctionContext) {
 
         FAPI.setToken(token.tenant_access_token)
         if (!difficulty || !limit) {
-          let sendMsg = await FAPI.sendTextMessage(sender.sender_id.user_id, '输入[easy|medium|hard]+人数')
+          await FAPI.sendTextMessage(sender.sender_id.user_id, '输入[easy|medium|hard]+人数')
           return
         }
         // 创建副本（群）
@@ -225,7 +227,7 @@ exports.main = async function (ctx: FunctionContext) {
 
         // 落库
         // 开始报名
-        const res = await FAPI.sendMessage(
+        await FAPI.sendMessage(
           message.chat_id,
           makeChallengeCard({
             owner: sender.sender_id.user_id,
@@ -252,14 +254,14 @@ sleep = function (t) {
 
 judgeLanguage = (code) => {
   if (/func\s/.test(code)) return 'golang'
-  if (/class MyCircularDeque:/.test(code)) return 'python3'
+  if (/class Solution:/.test(code)) return 'python3'
   if (/def\s/.test(code)) return 'python'
   if (/public:/.test(code)) return 'cpp'
-  if (/public class  MyCircularDeque\{/.test(code)) return 'csharp'
-  if (/class MyCircularDeque[\s\S]*public/.test(code)) return 'java'
-  if (/class MyCircularDeque \{/.test(code)) return 'php'
+  if (/public class  Solution\{/.test(code)) return 'csharp'
+  if (/class Solution[\s\S]*public/.test(code)) return 'java'
+  if (/class Solution \{/.test(code)) return 'php'
   if (/@param/.test(code)) return 'javascript'
-  if (/impl MyCircularDeque/.test(code)) return 'rust'
+  if (/impl Solution/.test(code)) return 'rust'
   if (/(char|boolean|int)/.test(code)) return 'c'
 
   return ''
