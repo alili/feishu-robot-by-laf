@@ -151,10 +151,9 @@ exports.main = async function (ctx: FunctionContext) {
           await sleep(500)
         }
 
-        console.log(`checkResult:`, checkResult)
         let user = await FAPI.getUserInfo(sender.sender_id.user_id)
         // 发送结果到群内
-        if (checkResult.total_correct === checkResult.total_testcases) {
+        if (checkResult.status_msg === 'Accepted') {
           let results = await db
             .collection('LeetcodeUser')
             .where({
@@ -355,8 +354,25 @@ makeQuestionCard = ({
     },
   },
 })
-makeWrongAnswerCard = ({ total_correct, total_testcases, last_testcase, expected_output, code_output, username }) => ({
+makeWrongAnswerCard = ({
+  total_correct,
+  total_testcases,
+  pretty_lang,
+  last_testcase,
+  expected_output,
+  code_output,
+  username,
+  status_msg,
+}) => ({
   elements: [
+    {
+      tag: 'markdown',
+      content: `**所用语言：** \n ${pretty_lang}`,
+    },
+    {
+      tag: 'markdown',
+      content: `**错误类型：** \n ${status_msg}`,
+    },
     {
       tag: 'div',
       fields: [
