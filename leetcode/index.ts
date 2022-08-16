@@ -10,19 +10,9 @@ dayjs.tz.setDefault('Asia/Shanghai')
 
 // const GROUP_ID = 'e6288gb4'
 const GROUP_ID = 'oc_95339d8e8c836d3ce29ee665b3cac594'
-
 const db = cloud.database()
-
 let LAPI
-let sleep, judgeLanguage, makeQuestionCard, makeWrongAnswerCard, makeACCard, makeRankCard, makeChallengeCard
-let queryConfig
-let emojiMap = {
-  0: '🥇',
-  1: '🥈',
-  2: '🥉',
-  3: '🏅',
-  4: '🏅',
-}
+
 exports.main = async function (ctx: FunctionContext) {
   // body, query 为请求参数, auth 是授权对象
   const { auth, body, query } = ctx
@@ -245,15 +235,15 @@ exports.main = async function (ctx: FunctionContext) {
   return { msg }
 }
 
-sleep = function (t) {
-  return new Promise((resolve, reject) => {
+//工具函数
+async function sleep(t) {
+  return new Promise((resolve) => {
     setTimeout(() => {
       return resolve(true)
     }, t)
   })
 }
-
-judgeLanguage = (code) => {
+async function judgeLanguage(code) {
   if (/func\s/.test(code)) return 'golang'
   if (/class OrderedStream:/.test(code)) return 'python3'
   if (/def\s/.test(code)) return 'python'
@@ -267,7 +257,9 @@ judgeLanguage = (code) => {
 
   return ''
 }
-queryConfig = {
+
+// 配置项
+const queryConfig = {
   questionOfToday: `
     query questionOfToday {
      todayRecord {
@@ -300,133 +292,6 @@ queryConfig = {
    }
    `,
 }
-makeQuestionCard = ({
-  translatedContent,
-  stats,
-  acRate,
-  topicTags,
-  titleSlug,
-  frontendQuestionId,
-  titleCn,
-  difficulty,
-}) => ({
-  config: {
-    wide_screen_mode: true,
-  },
-  elements: [
-    {
-      tag: 'markdown',
-      content: translatedContent.replace(/<.*?>/g, ''),
-    },
-    {
-      tag: 'hr',
-    },
-    {
-      tag: 'div',
-      fields: [
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**提交：**${JSON.parse(stats).totalSubmission}`,
-          },
-        },
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**通过率：**${(acRate * 100).toFixed(2)}%`,
-          },
-        },
-      ],
-    },
-    {
-      tag: 'markdown',
-      content: `**标签：** ${topicTags.map((item) => item.nameTranslated).join('、')}`,
-    },
-    {
-      tag: 'markdown',
-      content: `[题目链接](https://leetcode.cn/problems/${titleSlug}/)`,
-    },
-  ],
-  header: {
-    template: difficulty === 'Hard' ? 'red' : difficulty === 'Easy' ? 'green' : 'orange',
-    title: {
-      content: `【${dayjs().tz().format('MM月DD日')}】${frontendQuestionId}.${titleCn}`,
-      tag: 'plain_text',
-    },
-  },
-})
-makeWrongAnswerCard = ({
-  total_correct,
-  total_testcases,
-  pretty_lang,
-  last_testcase,
-  expected_output,
-  code_output,
-  username,
-  status_msg,
-}) => ({
-  elements: [
-    {
-      tag: 'markdown',
-      content: `**所用语言：** \n ${pretty_lang}`,
-    },
-    {
-      tag: 'markdown',
-      content: `**错误类型：** \n ${status_msg}`,
-    },
-    {
-      tag: 'div',
-      fields: [
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**总测试用例：**${total_testcases}`,
-          },
-        },
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**通过用例：**${total_correct}`,
-          },
-        },
-      ],
-    },
-    {
-      tag: 'markdown',
-      content: `**测试用例：** \n ${last_testcase}`,
-    },
-    {
-      tag: 'div',
-      fields: [
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**预期输出：**\n${expected_output}`,
-          },
-        },
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**实际输出：**\n${code_output}`,
-          },
-        },
-      ],
-    },
-  ],
-  header: {
-    template: 'red',
-    title: {
-      content: `❌ 答案错误 ${username} ❌`,
-      tag: 'plain_text',
-    },
-  },
-})
 const submitImage = {
   3: 'img_v2_41d61107-6993-4d03-854a-6e0d4a71ca5g',
   5: 'img_v2_90a6ec7e-c042-4c70-a9c6-f404ba55624g',
@@ -437,7 +302,147 @@ const submitImage = {
   60: 'img_v2_97c7ef9a-7be3-4009-ab3e-8a9171456b4g',
   100: 'img_v2_04fd08dd-8151-44dc-a7ce-f7150d00420g',
 }
-makeACCard = async ({
+const emojiMap = {
+  0: '🥇',
+  1: '🥈',
+  2: '🥉',
+  3: '🏅',
+  4: '🏅',
+}
+
+//消息卡片
+async function makeQuestionCard({
+  translatedContent,
+  stats,
+  acRate,
+  topicTags,
+  titleSlug,
+  frontendQuestionId,
+  titleCn,
+  difficulty,
+}) {
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    elements: [
+      {
+        tag: 'markdown',
+        content: translatedContent.replace(/<.*?>/g, ''),
+      },
+      {
+        tag: 'hr',
+      },
+      {
+        tag: 'div',
+        fields: [
+          {
+            is_short: true,
+            text: {
+              tag: 'lark_md',
+              content: `**提交：**${JSON.parse(stats).totalSubmission}`,
+            },
+          },
+          {
+            is_short: true,
+            text: {
+              tag: 'lark_md',
+              content: `**通过率：**${(acRate * 100).toFixed(2)}%`,
+            },
+          },
+        ],
+      },
+      {
+        tag: 'markdown',
+        content: `**标签：** ${topicTags.map((item) => item.nameTranslated).join('、')}`,
+      },
+      {
+        tag: 'markdown',
+        content: `[题目链接](https://leetcode.cn/problems/${titleSlug}/)`,
+      },
+    ],
+    header: {
+      template: difficulty === 'Hard' ? 'red' : difficulty === 'Easy' ? 'green' : 'orange',
+      title: {
+        content: `【${dayjs().tz().format('MM月DD日')}】${frontendQuestionId}.${titleCn}`,
+        tag: 'plain_text',
+      },
+    },
+  }
+}
+async function makeWrongAnswerCard({
+  total_correct,
+  total_testcases,
+  pretty_lang,
+  last_testcase,
+  expected_output,
+  code_output,
+  username,
+  status_msg,
+}) {
+  return {
+    elements: [
+      {
+        tag: 'markdown',
+        content: `**所用语言：** \n ${pretty_lang}`,
+      },
+      {
+        tag: 'markdown',
+        content: `**错误类型：** \n ${status_msg}`,
+      },
+      {
+        tag: 'div',
+        fields: [
+          {
+            is_short: true,
+            text: {
+              tag: 'lark_md',
+              content: `**总测试用例：**${total_testcases}`,
+            },
+          },
+          {
+            is_short: true,
+            text: {
+              tag: 'lark_md',
+              content: `**通过用例：**${total_correct}`,
+            },
+          },
+        ],
+      },
+      {
+        tag: 'markdown',
+        content: `**测试用例：** \n ${last_testcase}`,
+      },
+      {
+        tag: 'div',
+        fields: [
+          {
+            is_short: true,
+            text: {
+              tag: 'lark_md',
+              content: `**预期输出：**\n${expected_output}`,
+            },
+          },
+          {
+            is_short: true,
+            text: {
+              tag: 'lark_md',
+              content: `**实际输出：**\n${code_output}`,
+            },
+          },
+        ],
+      },
+    ],
+    header: {
+      template: 'red',
+      title: {
+        content: `❌ 答案错误 ${username} ❌`,
+        tag: 'plain_text',
+      },
+    },
+  }
+}
+async function makeACCard({
   pretty_lang,
   runtime_percentile,
   memory_percentile,
@@ -448,7 +453,7 @@ makeACCard = async ({
   username,
   uid,
   task_finish_time,
-}) => {
+}) {
   const times = [
     ...new Set(
       (
@@ -554,7 +559,7 @@ makeACCard = async ({
     },
   }
 }
-makeRankCard = (results) => {
+async function makeRankCard(results) {
   let users = [...new Set(results.map((item) => item.uid))]
   let temp = {}
   let timeRank = results
@@ -703,7 +708,7 @@ makeRankCard = (results) => {
     ],
   }
 }
-makeChallengeCard = ({ owner, difficulty, limit, users, chat_id }) => {
+async function makeChallengeCard({ owner, difficulty, limit, users, chat_id }) {
   return {
     config: {
       update_multi: true, //声明这张卡片更新后，对所有的接收人都生效
@@ -765,6 +770,8 @@ makeChallengeCard = ({ owner, difficulty, limit, users, chat_id }) => {
     },
   }
 }
+
+//Leetcode API
 LAPI = {
   getQuestionOfToday: async () => {
     let res = await axios.post('https://leetcode.cn/graphql/', {
