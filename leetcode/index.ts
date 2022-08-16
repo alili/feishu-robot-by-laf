@@ -245,14 +245,14 @@ async function sleep(t) {
 }
 async function judgeLanguage(code) {
   if (/func\s/.test(code)) return 'golang'
-  if (/class OrderedStream:/.test(code)) return 'python3'
+  if (/class \w+:/.test(code)) return 'python3'
   if (/def\s/.test(code)) return 'python'
   if (/public:/.test(code)) return 'cpp'
-  if (/public class  OrderedStream\{/.test(code)) return 'csharp'
-  if (/class OrderedStream[\s\S]*public/.test(code)) return 'java'
-  if (/class OrderedStream \{/.test(code)) return 'php'
+  if (/public class  \w+\{/.test(code)) return 'csharp'
+  if (/class \w+[\s\S]*public/.test(code)) return 'java'
+  if (/class \w+ \{/.test(code)) return 'php'
   if (/@param/.test(code)) return 'javascript'
-  if (/impl OrderedStream/.test(code)) return 'rust'
+  if (/impl \w+/.test(code)) return 'rust'
   if (/(char|boolean|int)/.test(code)) return 'c'
 
   return ''
