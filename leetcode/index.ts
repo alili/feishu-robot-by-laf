@@ -52,7 +52,7 @@ exports.main = async function (ctx: FunctionContext) {
 
       const questionMessage = await FAPI.message.sendCard(GROUP_ID, makeQuestionCard(q))
 
-      const data = await FAPI.message.putMessageTop(questionMessage.chat_id, questionMessage.message_id)
+      const data = await FAPI.chats.putMessageTop(questionMessage.chat_id, questionMessage.message_id)
       return data
     }
     // 发送排名
@@ -473,6 +473,7 @@ function makeQuestionCard({
     config: {
       wide_screen_mode: true,
     },
+    header: FAPI.tools.makeHeader(difficulty === 'Hard' ? 'red' : difficulty === 'Easy' ? 'green' : 'orange',`【${dayjs().tz().format('MM月DD日')}】${frontendQuestionId}.${titleCn}`),
     elements: FAPI.tools.makeElements([
       translatedContent.replace(/<.*?>/g, ''),
       '---',
@@ -484,13 +485,6 @@ function makeQuestionCard({
       `**标签：** ${topicTags.map((item) => item.nameTranslated).join('、')}`,
       `[题目链接](https://leetcode.cn/problems/${titleSlug}/)`,
     ]),
-    header: {
-      template: difficulty === 'Hard' ? 'red' : difficulty === 'Easy' ? 'green' : 'orange',
-      title: {
-        content: `【${dayjs().tz().format('MM月DD日')}】${frontendQuestionId}.${titleCn}`,
-        tag: 'plain_text',
-      },
-    },
   }
 }
 function makeWrongAnswerCard({
@@ -504,6 +498,7 @@ function makeWrongAnswerCard({
   status_msg,
 }) {
   return {
+    header: FAPI.tools.makeHeader('red', `❌ 答案错误 ${username} ❌`),
     elements: FAPI.tools.makeElements([
       `**所用语言：** \n ${pretty_lang}`,
       `**错误类型：** \n ${status_msg}`,
@@ -511,15 +506,9 @@ function makeWrongAnswerCard({
       `**测试用例：** \n ${last_testcase}`,
       ['text', `**预期输出：**\n${expected_output}`, `**实际输出：**\n${code_output}`],
     ]),
-    header: {
-      template: 'red',
-      title: {
-        content: `❌ 答案错误 ${username} ❌`,
-        tag: 'plain_text',
-      },
-    },
   }
 }
+
 async function makeACCard({
   pretty_lang,
   runtime_percentile,
@@ -574,14 +563,8 @@ async function makeACCard({
   }
   
   return {
+    header: FAPI.tools.makeHeader('green', isFirst ? `🎉 恭喜 ${username} 首次提交成功🎉` : `${username} 已连续${seriesDays}天提交成功`),
     elements: FAPI.tools.makeElements(elements),
-    header: {
-      template: 'green',
-      title: {
-        content: isFirst ? `🎉 恭喜 ${username} 首次提交成功🎉` : `${username} 已连续${seriesDays}天提交成功`,
-        tag: 'plain_text',
-      },
-    },
   }
 }
 function makeRankCard(results) {
@@ -620,7 +603,6 @@ function makeRankCard(results) {
     return obj
   }, {})
   
-  
   const timeRank = getRanks('runtime_percentile')
   const memoryRank = getRanks('memory_percentile')
   const superUsersForTime = getSuperUser('runtime_percentile')
@@ -630,23 +612,22 @@ function makeRankCard(results) {
   const elements = FAPI.tools.makeElements([
     '**用时榜**',
     `**满分选手：** ${Object.entries(superUsersForTime)
-        .map(([uid, langs]) => `<at id=${uid}></at>(${langs.join(', ')})`)
+        .map(([uid, langs]) => `@${uid}(${langs.join(', ')})`)
         .join(' ')}`,
     ...timeRank.map((item, index) => (['text', `**${emojiMap[index]} &nbsp; **[${item.username}(${item.pretty_lang})](https://leetcode.cn/submissions/detail/${item.submission_id})`,`**用时排名 / 时间：** ${item.runtime_percentile.toFixed(2)}% / ${item.status_runtime}`])),
     '---',
     '**内存榜**',
     `**满分选手：** ${Object.entries(superUsersForMemory)
-        .map(([uid, langs]) => `<at id=${uid}></at>(${langs.join(', ')})`)
+        .map(([uid, langs]) => `@${uid}(${langs.join(', ')})`)
         .join(' ')}`,
     ...memoryRank.map((item, index) => (['text', `**${emojiMap[index]} &nbsp; **[${item.username}(${item.pretty_lang})](https://leetcode.cn/submissions/detail/${item.submission_id})`, `**内存排名 / 内存：** ${item.memory_percentile.toFixed(2)}% / ${item.status_memory}`])),
     '---',
     `**今日使用语言：**\n${Object.entries(langs)
       .sort((a, b) => b[1] - a[1])
       .map(([key, value]) => `*${key}* x${value}`)
-      .join(', ')}\n\n**今日共有${users.length}名同学提交：**\n${users.map((uid) => `<at id=${uid}></at>`)}`,
+      .join(', ')}\n\n**今日共有${users.length}名同学提交：**\n${users.map((uid) => `@${uid}`)}`,
   ])
 
-  console.log(`elements:`, elements)
   return {
     header,
     elements,
@@ -657,26 +638,14 @@ function makeChallengeCard({ owner, difficulty, limit, users, chat_id }) {
     config: {
       update_multi: true, //声明这张卡片更新后，对所有的接收人都生效
     },
+    header: FAPI.tools.makeHeader('red', '一封挑战书'),
     elements: FAPI.tools.makeElements([
-      `<at user_id="${owner}""></at> 向群友发起挑战\n挑战难度为 【${difficulty}】`,
+      `@${owner} 向群友发起挑战\n挑战难度为 【${difficulty}】`,
       `报名人数 *${users.length}/${limit}*`,
       ['note', ...users.map((user) => `![${user.username}](user.avatar)`],
       '**战吗？**',
-      ['button', `!b:p[战啊！](${JSON.stringify({
-        difficulty,
-        owner,
-        limit,
-        users,
-        chat_id,
-      })}`],
+      ['button', `!b:p[战啊！](${JSON.stringify({ difficulty, owner, limit, users, chat_id, })}`],
     ]),
-    header: {
-      template: 'red',
-      title: {
-        content: '一封挑战书',
-        tag: 'plain_text',
-      },
-    },
   }
 }
 
