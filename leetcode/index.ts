@@ -12,6 +12,7 @@ dayjs.tz.setDefault('Asia/Shanghai')
 const GROUP_ID = 'oc_95339d8e8c836d3ce29ee665b3cac594'
 const db = cloud.database()
 let LAPI
+let FAPI
 
 exports.main = async function (ctx: FunctionContext) {
   // body, query 为请求参数, auth 是授权对象
@@ -25,7 +26,8 @@ exports.main = async function (ctx: FunctionContext) {
   }
   // 初始化API
   const { cookies, csrf, key, secret } = (await db.collection('Meta').doc('leetcode').get()).data
-  const FAPI = FSDK(key, secret)
+  FAPI = await FSDK(key, secret, { noCache: true })
+
   axios.defaults.headers['cookie'] = cookies
   axios.defaults.headers['x-csrftoken'] = csrf
   axios.defaults.headers['origin'] = 'https://leetcode.cn'
@@ -39,7 +41,7 @@ exports.main = async function (ctx: FunctionContext) {
     token.indate = new Date().getTime() + token.expire * 1000
     await db.collection('Meta').doc('leetcode_token').set(token)
   }
-  FAPI.setToken(token.tenant_access_token)
+  FAPI.setToken(token)
 
   // 增加GET事件
   if (query) {
@@ -48,9 +50,9 @@ exports.main = async function (ctx: FunctionContext) {
       let res = await LAPI.getQuestionOfToday()
       const q = res.todayRecord[0].question
 
-      const questionMessage = await FAPI.sendMessage(GROUP_ID, makeQuestionCard(q), 'interactive')
+      const questionMessage = await FAPI.message.sendCard(GROUP_ID, makeQuestionCard(q))
 
-      const data = await FAPI.putMessageTop(questionMessage.chat_id, questionMessage.message_id)
+      const data = await FAPI.message.putMessageTop(questionMessage.chat_id, questionMessage.message_id)
       return data
     }
     // 发送排名
@@ -69,7 +71,7 @@ exports.main = async function (ctx: FunctionContext) {
         })
         .get()
 
-      await FAPI.sendMessage(GROUP_ID, makeRankCard(results.data), 'interactive')
+      await FAPI.message.sendCard(GROUP_ID, makeRankCard(results.data))
       return
     }
   }
@@ -117,22 +119,35 @@ exports.main = async function (ctx: FunctionContext) {
   switch (header.event_type) {
     case 'im.message.receive_v1':
       if (message.chat_type === 'p2p') {
+        if (msg === 'debug2') {
+          const question = await LAPI.getRandomQuestion()
+          const questionDetail = await LAPI.getQuestionDetail(question.titleSlug)
+          console.log(`question:`, questionDetail)
+          const questionMessage = await FAPI.message.send(
+            sender.sender_id.user_id,
+            makeQuestionCard(questionDetail),
+            'interactive'
+          )
+          return {}
+        }
+
         let res = await LAPI.getQuestionOfToday()
         const q = res.todayRecord[0].question
 
         // 无法识别的代码，报错
         if (!judgeLanguage(msg)) {
-          await FAPI.sendTextMessage(sender.sender_id.user_id, '请输入合法代码')
+          await FAPI.message.sendText(sender.sender_id.user_id, '请输入合法代码')
           return {}
         }
-
+        console.log('judgeLanguage(msg)', judgeLanguage(msg))
         const submitId = await LAPI.submit({
           questionSlug: q.titleSlug,
           typed_code: msg,
           question_id: q.questionId,
           lang: judgeLanguage(msg),
         })
-        await FAPI.sendTextMessage(sender.sender_id.user_id, '代码已收到，正在努力打分...')
+        console.log('submitId:',submitId)
+        await FAPI.message.sendText(sender.sender_id.user_id, '代码已收到，正在努力打分...')
 
         // 多次重试直到获取judge结果
         let checkResult = null
@@ -141,7 +156,7 @@ exports.main = async function (ctx: FunctionContext) {
           await sleep(500)
         }
 
-        let user = await FAPI.getUserInfo(sender.sender_id.user_id)
+        let user = await FAPI.user.getInfo(sender.sender_id.user_id)
         // 发送结果到群内
         if (checkResult.status_msg === 'Accepted') {
           let results = await db
@@ -162,8 +177,7 @@ exports.main = async function (ctx: FunctionContext) {
           )
 
           // 发消息
-          // 不接受早于6点的提交
-          await FAPI.sendMessage(
+          await FAPI.message.sendCard(
             dayjs().tz().valueOf() < dayjs().tz().startOf('d').add(6, 'h').valueOf() ||
               dayjs().tz().valueOf() > dayjs().tz().startOf('d').add(23, 'h').valueOf()
               ? sender.sender_id.user_id
@@ -173,8 +187,7 @@ exports.main = async function (ctx: FunctionContext) {
               username: user.data.user.name,
               uid: sender.sender_id.user_id,
               rank,
-            }),
-            'interactive'
+            })
           )
 
           // 结果存入数据库
@@ -186,13 +199,12 @@ exports.main = async function (ctx: FunctionContext) {
             titleCn: q.titleCn,
           })
         } else {
-          await FAPI.sendMessage(
+          await FAPI.message.sendCard(
             sender.sender_id.user_id,
             makeWrongAnswerCard({
               ...checkResult,
               username: user.data.user.name,
-            }),
-            'interactive'
+            })
           )
         }
       }
@@ -201,33 +213,52 @@ exports.main = async function (ctx: FunctionContext) {
       if (message.chat_type === 'group') {
         const difficulty = msg.match(/(easy|medium|hard)/g)?.[0]
         const limit = msg.match(/\d+/g)?.[1]
-        let user = (await FAPI.getUserInfo(sender.sender_id.user_id)).data.user
+        const user = (await FAPI.user.getInfo(sender.sender_id.user_id)).data.user
+        const avatar = await FAPI.image.upload({ url: user.avatar.avatar_72 })
 
         FAPI.setToken(token.tenant_access_token)
         if (!difficulty || !limit) {
-          await FAPI.sendTextMessage(sender.sender_id.user_id, '输入[easy|medium|hard]+人数')
+          await FAPI.message.sendText(sender.sender_id.user_id, '输入[easy|medium|hard]+人数')
           return
         }
         // 创建副本（群）
 
-        let chats = await FAPI.createChats({
+        const chats = await FAPI.chats.create({
           user_id_list: [user.user_id],
           owner_id: user.user_id,
           name: `${user.name} 发起的挑战`,
         })
 
         // 落库
+        await db.collection('Challenges').add({
+          owner: user.user_id,
+          difficulty,
+          limit,
+          users: [
+            {
+              avatar,
+              username: user.name,
+              uid: user.user_id,
+            },
+          ],
+          chat_id: chats.data.chat_id,
+        })
+
         // 开始报名
-        await FAPI.sendMessage(
+        await FAPI.sendCard(
           message.chat_id,
           makeChallengeCard({
             owner: sender.sender_id.user_id,
             difficulty,
             limit,
-            users: [],
+            users: [
+              {
+                avatar,
+                username: user.name,
+              },
+            ],
             chat_id: chats.data.chat_id,
-          }),
-          'interactive'
+          })
         )
         return
       }
@@ -243,12 +274,12 @@ async function sleep(t) {
     }, t)
   })
 }
-async function judgeLanguage(code) {
+function judgeLanguage(code) {
   if (/func\s/.test(code)) return 'golang'
-  if (/class \w+:/.test(code)) return 'python3'
+  if (/class w+:/.test(code)) return 'python3'
   if (/def\s/.test(code)) return 'python'
   if (/public:/.test(code)) return 'cpp'
-  if (/public class  \w+\{/.test(code)) return 'csharp'
+  if (/public class \w+\{/.test(code)) return 'csharp'
   if (/class \w+[\s\S]*public/.test(code)) return 'java'
   if (/class \w+ \{/.test(code)) return 'php'
   if (/@param/.test(code)) return 'javascript'
@@ -291,6 +322,123 @@ const queryConfig = {
      }
    }
    `,
+  randomQuestion: `
+  query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+    problemsetQuestionList(
+      categorySlug: $categorySlug
+      limit: $limit
+      skip: $skip
+      filters: $filters
+    ) {
+      hasMore
+      total
+      questions {
+        acRate
+        difficulty
+        freqBar
+        frontendQuestionId
+        isFavor
+        paidOnly
+        solutionNum
+        status
+        title
+        titleCn
+        titleSlug
+        topicTags {
+          name
+          nameTranslated
+          id
+          slug
+        }
+        extra {
+          hasVideoSolution
+          topCompanyTags {
+            imgUrl
+            slug
+            numSubscribed
+          }
+        }
+      }
+    }
+  }
+  `,
+  questionDetail: `
+  query questionData($titleSlug: String!) {
+    question(titleSlug: $titleSlug) {
+      questionId
+      questionFrontendId
+      categoryTitle
+      boundTopicId
+      title
+      titleSlug
+      content
+      translatedTitle
+      translatedContent
+      isPaidOnly
+      difficulty
+      likes
+      dislikes
+      isLiked
+      similarQuestions
+      contributors {
+        username
+        profileUrl
+        avatarUrl
+        __typename
+      }
+      langToValidPlayground
+      topicTags {
+        name
+        slug
+        translatedName
+        __typename
+      }
+      companyTagStats
+      codeSnippets {
+        lang
+        langSlug
+        code
+        __typename
+      }
+      stats
+      hints
+      solution {
+        id
+        canSeeDetail
+        __typename
+      }
+      status
+      sampleTestCase
+      metaData
+      judgerAvailable
+      judgeType
+      mysqlSchemas
+      enableRunCode
+      envInfo
+      book {
+        id
+        bookName
+        pressName
+        source
+        shortDescription
+        fullDescription
+        bookImgUrl
+        pressImgUrl
+        productUrl
+        __typename
+      }
+      isSubscribed
+      isDailyQuestion
+      dailyRecordStatus
+      editorType
+      ugcQuestionId
+      style
+      exampleTestcases
+      jsonExampleTestcases
+      __typename
+    }
+  }
+  `,
 }
 const submitImage = {
   3: 'img_v2_41d61107-6993-4d03-854a-6e0d4a71ca5g',
@@ -311,7 +459,7 @@ const emojiMap = {
 }
 
 //消息卡片
-async function makeQuestionCard({
+function makeQuestionCard({
   translatedContent,
   stats,
   acRate,
@@ -325,42 +473,17 @@ async function makeQuestionCard({
     config: {
       wide_screen_mode: true,
     },
-    elements: [
-      {
-        tag: 'markdown',
-        content: translatedContent.replace(/<.*?>/g, ''),
-      },
-      {
-        tag: 'hr',
-      },
-      {
-        tag: 'div',
-        fields: [
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**提交：**${JSON.parse(stats).totalSubmission}`,
-            },
-          },
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**通过率：**${(acRate * 100).toFixed(2)}%`,
-            },
-          },
-        ],
-      },
-      {
-        tag: 'markdown',
-        content: `**标签：** ${topicTags.map((item) => item.nameTranslated).join('、')}`,
-      },
-      {
-        tag: 'markdown',
-        content: `[题目链接](https://leetcode.cn/problems/${titleSlug}/)`,
-      },
-    ],
+    elements: FAPI.tools.makeElements([
+      translatedContent.replace(/<.*?>/g, ''),
+      '---',
+      [
+        'text',
+        `**提交：**${!stats ? JSON.parse(stats).totalSubmission : '-'}`,
+        `**通过率：**${(acRate * 100).toFixed(2)}%`,
+      ],
+      `**标签：** ${topicTags.map((item) => item.nameTranslated).join('、')}`,
+      `[题目链接](https://leetcode.cn/problems/${titleSlug}/)`,
+    ]),
     header: {
       template: difficulty === 'Hard' ? 'red' : difficulty === 'Easy' ? 'green' : 'orange',
       title: {
@@ -370,7 +493,7 @@ async function makeQuestionCard({
     },
   }
 }
-async function makeWrongAnswerCard({
+function makeWrongAnswerCard({
   total_correct,
   total_testcases,
   pretty_lang,
@@ -381,58 +504,13 @@ async function makeWrongAnswerCard({
   status_msg,
 }) {
   return {
-    elements: [
-      {
-        tag: 'markdown',
-        content: `**所用语言：** \n ${pretty_lang}`,
-      },
-      {
-        tag: 'markdown',
-        content: `**错误类型：** \n ${status_msg}`,
-      },
-      {
-        tag: 'div',
-        fields: [
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**总测试用例：**${total_testcases}`,
-            },
-          },
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**通过用例：**${total_correct}`,
-            },
-          },
-        ],
-      },
-      {
-        tag: 'markdown',
-        content: `**测试用例：** \n ${last_testcase}`,
-      },
-      {
-        tag: 'div',
-        fields: [
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**预期输出：**\n${expected_output}`,
-            },
-          },
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**实际输出：**\n${code_output}`,
-            },
-          },
-        ],
-      },
-    ],
+    elements: FAPI.tools.makeElements([
+      `**所用语言：** \n ${pretty_lang}`,
+      `**错误类型：** \n ${status_msg}`,
+      ['text', `**总测试用例：**${total_testcases}`, `**通过用例：**${total_correct}`],
+      `**测试用例：** \n ${last_testcase}`,
+      ['text', `**预期输出：**\n${expected_output}`, `**实际输出：**\n${code_output}`],
+    ]),
     header: {
       template: 'red',
       title: {
@@ -478,78 +556,25 @@ async function makeACCard({
   }
 
   let elements = [
-    {
-      tag: 'markdown',
-      content: `**使用语言：**${pretty_lang}`,
-    },
-    {
-      tag: 'div',
-      fields: [
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**使用内存：**${status_memory}`,
-          },
-        },
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**使用时间：**${status_runtime}`,
-          },
-        },
-      ],
-    },
-    {
-      tag: 'div',
-      fields: [
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**内存排名：**${memory_percentile.toFixed()}% ${rank[1] < 3 ? emojiMap[rank[1]] : ''}`,
-          },
-        },
-        {
-          is_short: true,
-          text: {
-            tag: 'lark_md',
-            content: `**用时排名：**${runtime_percentile.toFixed()}% ${rank[0] < 3 ? emojiMap[rank[0]] : ''}`,
-          },
-        },
-      ],
-    },
-    {
-      tag: 'markdown',
-      content: `[解答详情](https://leetcode.cn/submissions/detail/${submission_id})`,
-    },
+    `**使用语言：**${pretty_lang}`,
+    ['text', `**使用内存：**${status_memory}`, `**使用时间：**${status_runtime}`],
+    [
+      'text',
+      `**内存排名：**${memory_percentile.toFixed()}% ${rank[1] < 3 ? emojiMap[rank[1]] : ''}`,
+      `**用时排名：**${runtime_percentile.toFixed()}% ${rank[0] < 3 ? emojiMap[rank[0]] : ''}`,
+    ],
+    `[解答详情](https://leetcode.cn/submissions/detail/${submission_id})`,
   ]
-
   if (isFirst) {
-    elements.unshift({
-      tag: 'img',
-      img_key: 'img_v2_b60e8bed-fb1f-4385-bdc0-e4840f1c59fg',
-      alt: {
-        tag: 'plain_text',
-        content: '首次提交！',
-      },
-    })
+    elements.unshift(`![首次提交！](img_v2_b60e8bed-fb1f-4385-bdc0-e4840f1c59fg)`)
   }
 
   if (Object.keys(submitImage).includes(seriesDays.toString())) {
-    elements.unshift({
-      tag: 'img',
-      img_key: submitImage[seriesDays],
-      alt: {
-        tag: 'plain_text',
-        content: `连续${seriesDays}天提交！`,
-      },
-    })
+    elements.unshift(`![连续${seriesDays}天提交！](${submitImage[seriesDays]})`)
   }
-
+  
   return {
-    elements,
+    elements: FAPI.tools.makeElements(elements),
     header: {
       template: 'green',
       title: {
@@ -559,30 +584,34 @@ async function makeACCard({
     },
   }
 }
-async function makeRankCard(results) {
-  let users = [...new Set(results.map((item) => item.uid))]
-  let temp = {}
-  let timeRank = results
-    .sort((a, b) => b.runtime_percentile - a.runtime_percentile || a.task_finish_time - b.task_finish_time)
-    .filter((item) => {
-      if (item.runtime_percentile === 100) return false
-      if (!temp[item.uid + item.pretty_lang]) {
-        temp[item.uid + item.pretty_lang] = 0
+function makeRankCard(results) {
+  const getRanks = (type) => {
+    let res = {}
+    return results
+    .sort((a, b) => b[type] - a[type] || a.task_finish_time - b.task_finish_time)
+      .filter((item) => {
+        if (item[type] === 100) return false
+        if (!res[item.uid + item.pretty_lang]) {
+          res[item.uid + item.pretty_lang] = 0
+        }
+        return !res[item.uid + item.pretty_lang]++
+      })
+      .slice(0, 5)
+  }
+
+  const getSuperUser =  (type) => results.reduce((obj, result) => {
+    if (result[type] === 100) {
+      if (!obj[result.uid]) {
+        obj[result.uid] = []
       }
-      return !temp[item.uid + item.pretty_lang]++
-    })
-    .slice(0, 5)
-  temp = {}
-  let memoryRank = results
-    .sort((a, b) => b.memory_percentile - a.memory_percentile || a.task_finish_time - b.task_finish_time)
-    .filter((item) => {
-      if (item.memory_percentile === 100) return false
-      if (!temp[item.uid + item.pretty_lang]) {
-        temp[item.uid + item.pretty_lang] = 0
+      if (!obj[result.uid].includes(result.pretty_lang)) {
+        obj[result.uid].push(result.pretty_lang)
       }
-      return !temp[item.uid + item.pretty_lang]++
-    })
-    .slice(0, 5)
+    }
+    return obj
+  }, {})
+  
+  const users = [...new Set(results.map((item) => item.uid))]
   const langs = results.reduce((obj, result) => {
     if (!obj[result.pretty_lang]) {
       obj[result.pretty_lang] = 0
@@ -590,177 +619,57 @@ async function makeRankCard(results) {
     obj[result.pretty_lang]++
     return obj
   }, {})
-  const superUsersForTime = results.reduce((obj, result) => {
-    if (result.runtime_percentile === 100) {
-      if (!obj[result.uid]) {
-        obj[result.uid] = []
-      }
-      if (!obj[result.uid].includes(result.pretty_lang)) {
-        obj[result.uid].push(result.pretty_lang)
-      }
-    }
-    return obj
-  }, {})
-  const superUsersForMemory = results.reduce((obj, result) => {
-    if (result.memory_percentile === 100) {
-      if (!obj[result.uid]) {
-        obj[result.uid] = []
-      }
-      if (!obj[result.uid].includes(result.pretty_lang)) {
-        obj[result.uid].push(result.pretty_lang)
-      }
-    }
-    return obj
-  }, {})
+  
+  
+  const timeRank = getRanks('runtime_percentile')
+  const memoryRank = getRanks('memory_percentile')
+  const superUsersForTime = getSuperUser('runtime_percentile')
+  const superUsersForMemory = getSuperUser('memory_percentile')
 
-  let header = {
-    template: 'blue',
-    title: {
-      content: `🏆 【${dayjs().add(8, 'h').format('MM月DD日')}】 ${results[0].frontendQuestionId}.${
-        results[0].titleCn
-      } 排行榜`,
-      tag: 'plain_text',
-    },
-  }
+  const header = FAPI.tools.makeHeader('blue', `🏆 【${dayjs().add(8, 'h').format('MM月DD日')}】 ${results[0].frontendQuestionId}.${ results[0].titleCn } 排行榜`)
+  const elements = FAPI.tools.makeElements([
+    '**用时榜**',
+    `**满分选手：** ${Object.entries(superUsersForTime)
+        .map(([uid, langs]) => `<at id=${uid}></at>(${langs.join(', ')})`)
+        .join(' ')}`,
+    ...timeRank.map((item, index) => (['text', `**${emojiMap[index]} &nbsp; **[${item.username}(${item.pretty_lang})](https://leetcode.cn/submissions/detail/${item.submission_id})`,`**用时排名 / 时间：** ${item.runtime_percentile.toFixed(2)}% / ${item.status_runtime}`])),
+    '---',
+    '**内存榜**',
+    `**满分选手：** ${Object.entries(superUsersForMemory)
+        .map(([uid, langs]) => `<at id=${uid}></at>(${langs.join(', ')})`)
+        .join(' ')}`,
+    ...memoryRank.map((item, index) => (['text', `**${emojiMap[index]} &nbsp; **[${item.username}(${item.pretty_lang})](https://leetcode.cn/submissions/detail/${item.submission_id})`, `**内存排名 / 内存：** ${item.memory_percentile.toFixed(2)}% / ${item.status_memory}`])),
+    '---',
+    `**今日使用语言：**\n${Object.entries(langs)
+      .sort((a, b) => b[1] - a[1])
+      .map(([key, value]) => `*${key}* x${value}`)
+      .join(', ')}\n\n**今日共有${users.length}名同学提交：**\n${users.map((uid) => `<at id=${uid}></at>`)}`,
+  ])
 
+  console.log(`elements:`, elements)
   return {
     header,
-    elements: [
-      {
-        tag: 'markdown',
-        content: '**用时榜**',
-      },
-      {
-        tag: 'markdown',
-        content: `**满分选手：** ${Object.entries(superUsersForTime)
-          .map(([uid, langs]) => `<at id=${uid}></at>(${langs.join(', ')})`)
-          .join(' ')}`,
-      },
-      ...timeRank.map((item, index) => ({
-        tag: 'div',
-        fields: [
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**${emojiMap[index]} &nbsp; **[${item.username}(${item.pretty_lang})](https://leetcode.cn/submissions/detail/${item.submission_id})`,
-            },
-          },
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**用时排名 / 时间：** ${item.runtime_percentile.toFixed(2)}% / ${item.status_runtime}`,
-            },
-          },
-        ],
-      })),
-      {
-        tag: 'hr',
-      },
-      {
-        tag: 'markdown',
-        content: '**内存榜**',
-      },
-      {
-        tag: 'markdown',
-        content: `**满分选手：** ${Object.entries(superUsersForMemory)
-          .map(([uid, langs]) => `<at id=${uid}></at>(${langs.join(', ')})`)
-          .join(' ')}`,
-      },
-      ...memoryRank.map((item, index) => ({
-        tag: 'div',
-        fields: [
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**${emojiMap[index]} &nbsp; **[${item.username}(${item.pretty_lang})](https://leetcode.cn/submissions/detail/${item.submission_id})`,
-            },
-          },
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**内存排名 / 内存：** ${item.memory_percentile.toFixed(2)}% / ${item.status_memory}`,
-            },
-          },
-        ],
-      })),
-      {
-        tag: 'hr',
-      },
-      {
-        tag: 'div',
-        fields: [
-          {
-            is_short: true,
-            text: {
-              tag: 'lark_md',
-              content: `**今日使用语言：**\n${Object.entries(langs)
-                .sort((a, b) => b[1] - a[1])
-                .map(([key, value]) => `*${key}* x${value}`)
-                .join(', ')}\n\n**今日共有${users.length}名同学提交：**\n${users.map((uid) => `<at id=${uid}></at>`)}`,
-            },
-          },
-        ],
-      },
-    ],
+    elements,
   }
 }
-async function makeChallengeCard({ owner, difficulty, limit, users, chat_id }) {
+function makeChallengeCard({ owner, difficulty, limit, users, chat_id }) {
   return {
     config: {
       update_multi: true, //声明这张卡片更新后，对所有的接收人都生效
     },
-    elements: [
-      {
-        tag: 'div',
-        text: {
-          content: `<at user_id="${owner}""></at> 向群友发起挑战\n挑战难度为 【${difficulty}】`,
-          tag: 'lark_md',
-        },
-      },
-      {
-        tag: 'markdown',
-        content: `报名人数 *${users.length}/${limit}*`,
-      },
-      {
-        tag: 'note',
-        elements: users.map((user) => ({
-          tag: 'img',
-          img_key: user.avatar,
-          alt: {
-            tag: 'plain_text',
-            content: user.username,
-          },
-        })),
-      },
-      {
-        tag: 'markdown',
-        content: '**战吗？**',
-      },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            value: {
-              difficulty,
-              owner,
-              limit,
-              users,
-              chat_id,
-            },
-            text: {
-              tag: 'plain_text',
-              content: '战啊！',
-            },
-            type: 'primary',
-          },
-        ],
-      },
-    ],
+    elements: FAPI.tools.makeElements([
+      `<at user_id="${owner}""></at> 向群友发起挑战\n挑战难度为 【${difficulty}】`,
+      `报名人数 *${users.length}/${limit}*`,
+      ['note', ...users.map((user) => `![${user.username}](user.avatar)`],
+      '**战吗？**',
+      ['button', `!b:p[战啊！](${JSON.stringify({
+        difficulty,
+        owner,
+        limit,
+        users,
+        chat_id,
+      })}`],
+    ]),
     header: {
       template: 'red',
       title: {
@@ -779,14 +688,50 @@ LAPI = {
     })
     return res.data.data
   },
+  getRandomQuestion: async (difficulty) => {
+    const randomSkip = Math.floor(Math.random() * 500)
+
+    const variables = {
+      categorySlug: 'algorithms',
+      skip: randomSkip,
+      limit: 1,
+    }
+
+    if (difficulty) {
+      variables.filters.difficulty = difficulty
+    }
+    try {
+      let res = await axios.post('https://leetcode.cn/graphql/', {
+        query: queryConfig.randomQuestion,
+        variables,
+      })
+      return res.data.data.problemsetQuestionList.questions[0]
+    } catch (error) {
+      console.log(`error:`, error)
+    }
+  },
+  getQuestionDetail: async (titleSlug) => {
+    let res = await axios.post('https://leetcode.cn/graphql/', {
+      operationName: 'questionData',
+      query: queryConfig.questionDetail,
+      variables: {
+        titleSlug,
+      },
+    })
+    return res.data.data.question
+  },
   submit: async ({ questionSlug, lang, question_id, typed_code }) => {
     const url = `https://leetcode.cn/problems/${questionSlug}/submit/`
-    const res = await axios.post(url, {
-      lang,
-      question_id,
-      typed_code,
-    })
-    return res.data.submission_id
+    try {
+      const res = await axios.post(url, {
+        lang,
+        question_id,
+        typed_code,
+      })
+      return res.data.submission_id
+    } catch (error) {
+      return error
+    }
   },
   checkSubmission: async (submission_id) => {
     const url = `https://leetcode.cn/submissions/detail/${submission_id}/check/`
