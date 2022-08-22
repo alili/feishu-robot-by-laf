@@ -8,6 +8,7 @@ dayjs.extend(utc)
 dayjs.extend(timezone)
 dayjs.tz.setDefault('Asia/Shanghai')
 
+const ME = 'e6288gb4'
 // const GROUP_ID = 'e6288gb4'
 const GROUP_ID = 'oc_95339d8e8c836d3ce29ee665b3cac594'
 const db = cloud.database()
@@ -30,6 +31,7 @@ exports.main = async function (ctx: FunctionContext) {
       const data = await FAPI.chats.putMessageTop(questionMessage.chat_id, questionMessage.message_id)
       return data
     }
+
     // 发送排名
     if (query.rank) {
       let frontendQuestionId = query.rank
@@ -49,40 +51,76 @@ exports.main = async function (ctx: FunctionContext) {
       await FAPI.message.sendCard(GROUP_ID, makeRankCard(results.data))
       return
     }
+
+    // 发送提醒
+    if (query.notice) {
+      const records = (await db.collection('LeetcodeNotice').limit(1000).get()).data
+      
+      records.forEach(({_id, seriesDays, noticeTime}) => {
+        if (seriesDays >=3 && dayjs().isAfter(dayjs(noticeTime))) {
+          FAPI.message.sendCard(_id, makeNoticeCard(seriesDays))
+        }
+      })
+
+      return records
+
+    }
   }
 
   // 按钮事件
   if (body.action) {
-    const { difficulty, limit, users, owner, chat_id } = body.action.value
-    const user = (await FAPI.getUserInfo(body.user_id)).data.user
-    const avatar = await FAPI.uploadImage({ url: user.avatar.avatar_72 })
-
-    // 进入群内
-    FAPI.setToken(token.tenant_access_token)
-    await FAPI.addMembers(chat_id, [body.user_id])
-    // 更新卡片
-    return makeChallengeCard({
-      owner,
-      difficulty,
-      limit,
-      users: users.concat([
-        {
-          avatar,
-          username: user.name,
-          uid: user.user_id,
-        },
-      ]),
-      chat_id,
-    })
+    const { type, action, seriesDays, difficulty, limit, users, owner, chat_id } = body.action.value
+    switch (type) {
+      case 'subscribe':
+        switch (action) {
+          case 'ok':
+            await db.collection('LeetcodeNotice').doc(body.user_id).set({
+              noticeTime: dayjs().add(1, 'day').startOf('day').valueOf(),
+              seriesDays,
+            })
+            break;
+          default:
+            break;
+        }
+        return makeNoticeCard(0)
+      default:
+        const user = (await FAPI.getUserInfo(body.user_id)).data.user
+        const avatar = await FAPI.uploadImage({ url: user.avatar.avatar_72 })
+    
+        // 进入群内
+        await FAPI.chats.addMembers(chat_id, [body.user_id])
+        // 更新卡片
+        return makeChallengeCard({
+          owner,
+          difficulty,
+          limit,
+          users: users.concat([
+            {
+              avatar,
+              username: user.name,
+              uid: user.user_id,
+            },
+          ]),
+          chat_id,
+        })
+    }
   }
 
   const {
     header,
+    event,
     event: { message, sender },
   } = body
   
-  const msg = JSON.parse(message.content).text
+  const msg = message ? JSON.parse(message.content).text : ''
 
+  FAPI.event.add('im.chat.member.user.added_v1', async () => {
+    let uids = event.users.map(user => user.user_id.user_id)
+    for(let i in uids) {
+      await FAPI.message.sendText(uids[i], '直接复制力扣题解题发送给我，即可参与每日一题活动')
+    }
+
+  })
   FAPI.event.add('im.message.receive_v1', async () => {
     if (message.chat_type === 'p2p') {
       if (msg === 'debug2') {
@@ -99,7 +137,6 @@ exports.main = async function (ctx: FunctionContext) {
       let res = await LAPI.getQuestionOfToday()
       const question = res.todayRecord[0].question
 
-      console.log(`question:`, question)
       // 无法识别的代码，报错
       if (!judgeLanguage(msg)) {
         await FAPI.message.sendText(sender.sender_id.user_id, '请输入合法代码')
@@ -140,6 +177,33 @@ exports.main = async function (ctx: FunctionContext) {
           [0, 0]
         )
   
+        const records = (
+          await db
+            .collection('LeetcodeUser')
+            .where({
+              uid:sender.sender_id.user_id,
+            })
+            .get()
+        ).data
+      
+        let {isFirst, seriesDays} = getDays(records)
+        
+        // 结果存入数据库
+        await db.collection('LeetcodeUser').add({
+          ...checkResult,
+          uid: sender.sender_id.user_id,
+          username: user.data.user.name,
+          frontendQuestionId: question.frontendQuestionId,
+          titleCn: question.titleCn,
+        })
+        
+
+        await db.collection('LeetcodeNotice').doc(sender.sender_id.user_id).set({
+          seriesDays,
+          noticeTime: dayjs().add(1, 'day').startOf('day').valueOf(),
+        })
+        
+
         // 发消息
         await FAPI.message.sendCard(
           dayjs().tz().valueOf() < dayjs().tz().startOf('d').add(6, 'h').valueOf() ||
@@ -149,19 +213,11 @@ exports.main = async function (ctx: FunctionContext) {
           await makeACCard({
             ...checkResult,
             username: user.data.user.name,
-            uid: sender.sender_id.user_id,
             rank,
+            seriesDays,
+            isFirst
           })
         )
-  
-        // 结果存入数据库
-        await db.collection('LeetcodeUser').add({
-          ...checkResult,
-          uid: sender.sender_id.user_id,
-          username: user.data.user.name,
-          frontendQuestionId: question.frontendQuestionId,
-          titleCn: question.titleCn,
-        })
       } else {
         // 错误卡片发给个人
         await FAPI.message.sendCard(
@@ -228,7 +284,7 @@ exports.main = async function (ctx: FunctionContext) {
       return
     }
   })
-
+  
   await FAPI.event.listen(body)
   return { msg }
 }
@@ -258,14 +314,17 @@ async function init(body) {
     token.indate = new Date().getTime() + token.expire * 1000
     await db.collection('Meta').doc(`${key}_token`).set(token)
   }
+
   FAPI.setToken(token)
 
   // 避免冗余事件
-  const _event = body.header.event_id && (await db.collection('Events').doc(body.header.event_id).get()).data
-  if (_event) {
-    return 'has event'
-  } else {
-    db.collection('Events').doc(body.header.event_id).set(body.event.message)
+  if (body?.header?.event_id ) {
+    const _event = (await db.collection('Events').doc(body.header.event_id).get()).data
+    if (_event) {
+      return 'has event'
+    } else {
+      db.collection('Events').doc(body.header.event_id).set(body.event.message)
+    }
   }
 
 }
@@ -280,7 +339,7 @@ async function sleep(t) {
 }
 function judgeLanguage(code) {
   if (/func\s/.test(code)) return 'golang'
-  if (/class w+:/.test(code)) return 'python3'
+  if (/class \w+:/.test(code)) return 'python3'
   if (/def\s/.test(code)) return 'python'
   if (/public:/.test(code)) return 'cpp'
   if (/public class \w+\{/.test(code)) return 'csharp'
@@ -292,15 +351,20 @@ function judgeLanguage(code) {
 
   return ''
 }
-function getDays(times) {
-  const isFirst = !times.length
+function getDays(records) {
+  records = [
+    ...new Set(
+      records.map(({ task_finish_time }) => Math.floor((task_finish_time + 1000 * 60 * 60 * 8) / (1000 * 60 * 60 * 24)))
+    ),
+  ]
+  const isFirst = !records.length
 
   let today = Math.floor((new Date().getTime() + 1000 * 60 * 60 * 8) / (1000 * 60 * 60 * 24))
-  let seriesDays = 1
-  if (times.slice(-1)[0] === today) {
-    times.pop()
+  let seriesDays = 0
+  if (records.slice(-1)[0] === today) {
+    records.pop()
   }
-  while (times.pop() === --today) {
+  while (records.pop() === --today) {
     seriesDays++
   }
 
@@ -536,22 +600,9 @@ async function makeACCard({
   rank,
   submission_id,
   username,
-  uid,
+  isFirst,
+  seriesDays
 }) {
-  const times = [
-    ...new Set(
-      (
-        await db
-          .collection('LeetcodeUser')
-          .where({
-            uid,
-          })
-          .get()
-      ).data.map(({ task_finish_time }) => Math.floor((task_finish_time + 1000 * 60 * 60 * 8) / (1000 * 60 * 60 * 24)))
-    ),
-  ]
-
-  let {isFirst, seriesDays} = getDays(times)
   let elements = [
     `**使用语言：**${pretty_lang}`,
     ['text', `**使用内存：**${status_memory}`, `**使用时间：**${status_runtime}`],
@@ -566,12 +617,12 @@ async function makeACCard({
     elements.unshift(`![首次提交！](img_v2_b60e8bed-fb1f-4385-bdc0-e4840f1c59fg)`)
   }
 
-  if (Object.keys(submitImage).includes(seriesDays.toString())) {
-    elements.unshift(`![连续${seriesDays}天提交！](${submitImage[seriesDays]})`)
+  if (Object.keys(submitImage).includes((seriesDays + 1).toString())) {
+    elements.unshift(`![连续${seriesDays + 1}天提交！](${submitImage[seriesDays + 1]})`)
   }
   
   return {
-    header: FAPI.tools.makeHeader('green', isFirst ? `🎉 恭喜 ${username} 首次提交成功🎉` : `${username} 已连续${seriesDays}天提交成功`),
+    header: FAPI.tools.makeHeader('green', isFirst ? `🎉 恭喜 ${username} 首次提交成功🎉` : `${username} 已连续${seriesDays + 1}天提交成功`),
     elements: FAPI.tools.makeElements(elements),
   }
 }
@@ -656,7 +707,25 @@ function makeChallengeCard({ owner, difficulty, limit, users, chat_id }) {
     ]),
   }
 }
-
+function makeNoticeCard(seriesDays) {
+  if (!seriesDays) {
+    return {
+      header: FAPI.tools.makeHeader('green', '请记得提交哦！'),
+      elements: FAPI.tools.makeElements([
+        '加油！'
+      ]),
+    }
+  }
+  return {
+    header: FAPI.tools.makeHeader('red', '今天还没提交哦！'),
+    elements: FAPI.tools.makeElements([
+      `你已经连续提交了 ${seriesDays} 天，坚持住哦！`,
+      ['button', 
+      `!b:p[知道了](${JSON.stringify({ type: 'subscribe', action: 'ok', seriesDays })})`,
+      `!b[一小时后再提醒我](${JSON.stringify({ type: 'subscribe', action: 'delay', seriesDays })})`],
+    ]),
+  }
+}
 //Leetcode API
 LAPI = {
   getQuestionOfToday: async () => {
