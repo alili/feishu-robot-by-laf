@@ -117,7 +117,7 @@ exports.main = async function (ctx: FunctionContext) {
   FAPI.event.add('im.chat.member.user.added_v1', async () => {
     let uids = event.users.map(user => user.user_id.user_id)
     for(let i in uids) {
-      await FAPI.message.sendText(uids[i], '直接复制力扣题题发送给我，即可参与每日一题活动')
+      await FAPI.message.sendText(uids[i], '直接复制力扣题解发送给我，即可参与每日一题活动')
     }
 
   })
