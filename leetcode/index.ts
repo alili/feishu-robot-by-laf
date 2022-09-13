@@ -29,6 +29,7 @@ exports.main = async function (ctx: FunctionContext) {
       const question = res.todayRecord[0].question
       const questionMessage = await FAPI.message.sendCard(GROUP_ID, makeQuestionCard(question))
       const data = await FAPI.chats.putMessageTop(questionMessage.chat_id, questionMessage.message_id)
+      await FAPI.chats.pin(questionMessage.message_id)
       return data
     }
 
@@ -108,19 +109,11 @@ exports.main = async function (ctx: FunctionContext) {
 
   const {
     header,
-    event,
     event: { message, sender },
   } = body
   
-  const msg = message ? JSON.parse(message.content).text : ''
+  const msg = JSON.parse(message.content).text
 
-  FAPI.event.add('im.chat.member.user.added_v1', async () => {
-    let uids = event.users.map(user => user.user_id.user_id)
-    for(let i in uids) {
-      await FAPI.message.sendText(uids[i], '直接复制力扣题解发送给我，即可参与每日一题活动')
-    }
-
-  })
   FAPI.event.add('im.message.receive_v1', async () => {
     if (message.chat_type === 'p2p') {
       if (msg === 'debug2') {
@@ -138,25 +131,35 @@ exports.main = async function (ctx: FunctionContext) {
       const question = res.todayRecord[0].question
 
       // 无法识别的代码，报错
-      if (!judgeLanguage(msg)) {
-        await FAPI.message.sendText(sender.sender_id.user_id, '请输入合法代码')
+      let lang = judgeLanguage(msg)
+      console.log(lang)
+      if (!lang) {
+        await FAPI.message.sendText(sender.sender_id.user_id, '请输入合法代码或题解链接')
         return {}
       }
-      const submitId = await LAPI.submit({
-        questionSlug: question.titleSlug,
-        typed_code: msg,
-        question_id: question.questionId,
-        lang: judgeLanguage(msg),
-      })
+
+      let submitId = ''
+      if (lang === 'leetcode') {
+        submitId = /\d+/.exec(msg)[0]
+      } else {
+        submitId = await LAPI.submit({
+          questionSlug: question.titleSlug,
+          typed_code: msg,
+          question_id: question.questionId,
+          lang,
+        })
+        console.log(`submitId:`, submitId)
+      }
       await FAPI.message.sendText(sender.sender_id.user_id, '代码已收到，正在努力打分...')
-  
+      
+      
       // 多次重试直到获取judge结果
       let checkResult = null
       while (!checkResult || checkResult.state !== 'SUCCESS') {
         checkResult = await LAPI.checkSubmission(submitId)
         await sleep(500)
       }
-  
+      
       let user = await FAPI.user.getInfo(sender.sender_id.user_id)
       // 发送结果到群内
       if (checkResult.status_msg === 'Accepted') {
@@ -165,6 +168,7 @@ exports.main = async function (ctx: FunctionContext) {
           .where({
             frontendQuestionId: question.frontendQuestionId,
           })
+          .limit(3000)
           .get()
   
         let rank = results.data.reduce(
@@ -183,6 +187,7 @@ exports.main = async function (ctx: FunctionContext) {
             .where({
               uid:sender.sender_id.user_id,
             })
+            .limit(3000)
             .get()
         ).data
       
@@ -314,12 +319,12 @@ async function init(body) {
     token.indate = new Date().getTime() + token.expire * 1000
     await db.collection('Meta').doc(`${key}_token`).set(token)
   }
-
   FAPI.setToken(token)
 
   // 避免冗余事件
   if (body?.header?.event_id ) {
     const _event = (await db.collection('Events').doc(body.header.event_id).get()).data
+    console.log(`_event:`, _event)
     if (_event) {
       return 'has event'
     } else {
@@ -339,6 +344,7 @@ async function sleep(t) {
 }
 function judgeLanguage(code) {
   if (/func\s/.test(code)) return 'golang'
+  if (/object \w+/.test(code)) return 'scala'
   if (/class \w+:/.test(code)) return 'python3'
   if (/def\s/.test(code)) return 'python'
   if (/public:/.test(code)) return 'cpp'
@@ -348,6 +354,8 @@ function judgeLanguage(code) {
   if (/@param/.test(code)) return 'javascript'
   if (/impl \w+/.test(code)) return 'rust'
   if (/(char|boolean|int)/.test(code)) return 'c'
+
+  if (/^https:\/\/leetcode.cn\/submissions\/detail\//.test(code)) return 'leetcode'
 
   return ''
 }
@@ -622,7 +630,7 @@ async function makeACCard({
   }
   
   return {
-    header: FAPI.tools.makeHeader('green', isFirst ? `🎉 恭喜 ${username} 首次提交成功🎉` : `${username} 已连续${seriesDays + 1}天提交成功`),
+    header: FAPI.tools.makeHeader('green', isFirst ? `🎉 恭喜 ${username} 首次提交成功🎉` : seriesDays === 0 ? `${username} 再次开启了他的刷题征程！`  : `${username} 已连续${seriesDays + 1}天提交成功`),
     elements: FAPI.tools.makeElements(elements),
   }
 }
