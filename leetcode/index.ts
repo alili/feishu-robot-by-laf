@@ -8,8 +8,8 @@ dayjs.extend(utc)
 dayjs.extend(timezone)
 dayjs.tz.setDefault('Asia/Shanghai')
 
-const ME = 'e6288gb4'
-// const GROUP_ID = 'e6288gb4'
+// const ME = 'e6288gb4'
+// const GROUP_ID = 'oc_0f8a7eda0d141bf9bca603b1240a2879' //test group
 const GROUP_ID = 'oc_95339d8e8c836d3ce29ee665b3cac594'
 const db = cloud.database()
 let LAPI, FAPI
@@ -21,6 +21,7 @@ exports.main = async function (ctx: FunctionContext) {
   if (valid) {
     return valid
   }
+
    // 增加GET事件
   if (query) {
     // 手动发送每日一题
@@ -734,7 +735,7 @@ function makeNoticeCard(seriesDays) {
     ]),
   }
 }
-//Leetcode API
+// Leetcode API
 LAPI = {
   getQuestionOfToday: async () => {
     let res = await axios.post('https://leetcode.cn/graphql/', {
