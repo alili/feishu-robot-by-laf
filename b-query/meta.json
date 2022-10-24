@@ -1,0 +1,1 @@
+{"name":"b-query","label":"B站通知鸭-轮询","hash":"f3bb0391ee9fe90000f1d1fcaa9e1a42","tags":[],"description":"","enableHTTP":true,"status":1,"triggers":[{"_id":"633c704b0be0332fc9bfc0e1","name":"消息回复","type":"timer","event":null,"duration":600,"status":1,"desc":"","created_at":"2022-10-04T17:41:31.912Z","updated_at":"2022-10-04T17:41:31.912Z"}],"version":31}
