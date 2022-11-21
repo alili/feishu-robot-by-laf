@@ -45,22 +45,19 @@ exports.main = async function (ctx: FunctionContext) {
   }
   FAPI.setToken(token)
 
-  FAPI.event.keyword('(.*)', async (msg) => {
+  FAPI.event.add('notice', async () => {
     if (message.parent_id) {
       let comment = await db.collection('Message').doc(message.parent_id).get()
       console.log(comment.data,msg)       
       await BAPI.comment.replyComment(comment.data, msg)
       await BAPI.comment.setLike(comment.data)
     }
-  })
-
-  FAPI.event.add('im.message.reaction.created_v1', async () => {
       let { message_id } = event
       let comment = await db.collection('Message').doc(message_id).get()
       await BAPI.comment.setLike(comment.data)
   })
 
-  await FAPI.event.listen(body)
+  await FAPI.event.listen(body, 'notice')
 
   return {}
 }

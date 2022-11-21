@@ -28,10 +28,16 @@ exports.main = async function (ctx: FunctionContext) {
     if (query.today) {
       let res = await LAPI.getQuestionOfToday()
       const question = res.todayRecord[0].question
-      const questionMessage = await FAPI.message.sendCard(GROUP_ID, makeQuestionCard(question))
-      const data = await FAPI.chats.putMessageTop(questionMessage.chat_id, questionMessage.message_id)
-      await FAPI.chats.pin(questionMessage.message_id)
-      return data
+      
+      try {
+        console.log(makeQuestionCard(question))
+        const questionMessage = await FAPI.message.sendCard(GROUP_ID, makeQuestionCard(question))
+        await FAPI.chats.putMessageTop(questionMessage.chat_id, questionMessage.message_id)
+        await FAPI.chats.pin(questionMessage.message_id)
+      } catch (err) {
+        console.log('err:', JSON.stringify(err))
+      }
+
     }
 
     // 发送排名
@@ -115,7 +121,7 @@ exports.main = async function (ctx: FunctionContext) {
   
   const msg = JSON.parse(message.content).text
 
-  FAPI.event.add('im.message.receive_v1', async () => {
+  FAPI.event.add('leetcode', async () => {
     if (message.chat_type === 'p2p') {
       if (msg === 'debug2') {
         const question = await LAPI.getRandomQuestion()
@@ -291,7 +297,7 @@ exports.main = async function (ctx: FunctionContext) {
     }
   })
   
-  await FAPI.event.listen(body)
+  await FAPI.event.listen(body, 'leetcode')
   return { msg }
 }
 
@@ -356,7 +362,7 @@ function judgeLanguage(code) {
   if (/impl \w+/.test(code)) return 'rust'
   if (/(char|boolean|int)/.test(code)) return 'c'
 
-  if (/^https:\/\/leetcode.cn\/submissions\/detail\//.test(code)) return 'leetcode'
+  if (/^https:\/\/leetcode\.cn/.test(code)) return 'leetcode'
 
   return ''
 }
@@ -566,7 +572,7 @@ function makeQuestionCard({
     },
     header: FAPI.tools.makeHeader(difficulty === 'Hard' ? 'red' : difficulty === 'Easy' ? 'green' : 'orange',`【${dayjs().tz().format('MM月DD日')}】${frontendQuestionId}.${titleCn}`),
     elements: FAPI.tools.makeElements([
-      translatedContent.replace(/<.*?>/g, ''),
+      `${translatedContent.replace(/<.*?>/g, '')}`,
       '---',
       [
         'text',
@@ -575,7 +581,7 @@ function makeQuestionCard({
       ],
       `**标签：** ${topicTags.map((item) => item.nameTranslated).join('、')}`,
       `[题目链接](https://leetcode.cn/problems/${titleSlug}/)`,
-    ]),
+    ], {withoutAt: true}),
   }
 }
 function makeWrongAnswerCard({

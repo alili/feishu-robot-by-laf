@@ -1,47 +1,54 @@
-import cloud from '@/cloud-sdk'
-import * as dayjs from 'dayjs'
-import * as FSDK from 'feishu-sdk'
 
-const db = cloud.database()
-let FAPI
+
+import cloud from '@/cloud-sdk'
+import * as axios from 'axios'
+import * as GitHub from 'github-api'
+import * as FSDK from 'feishu-sdk'
+import * as dayjs from 'dayjs'
+const utc = require('dayjs/plugin/utc')
+const timezone = require('dayjs/plugin/timezone')
+dayjs.extend(utc)
+dayjs.extend(timezone)
+dayjs.tz.setDefault('Asia/Shanghai')
+
+const getInfo = async () => {
+  const gh = new GitHub({})
+
+  let Repo = gh.getRepo('GreptimeTeam', 'greptimedb')
+  let detail = await Repo.getDetails()
+  let pr = await Repo.listPullRequests({})
+
+  return {
+    detail: detail.data,
+    pr: pr.data,
+  }
+}
+
+const webhook = 'https://open.feishu.cn/open-apis/bot/v2/hook/cf18b3f4-aae5-419b-a4ec-bcd38c49775f'
 
 exports.main = async function (ctx: FunctionContext) {
-  // body, query 为请求参数, auth 是授权对象
-  const { auth, body, query } = ctx
-  await init(body)
-  // 数据库操作
-  return
-}
-// init
-async function init(body) {
-  // 飞书事件监听绑定
-  if (body.challenge) {
-    return {
-      challenge: body.challenge,
-    }
-  }
-  // 初始化API
-  const { key, secret } = (await db.collection('Meta').doc('github_app').get()).data
-  FAPI = await FSDK(key, secret, { noCache: true })
+  let { detail, pr} = await getInfo()
+  let FAPI = await FSDK()
 
-  // 获取缓存token或请求token
-  let token = await db.collection('Meta').doc(`${key}_token`).get()
-  if (token.data?.indate > new Date().getTime()) {
-    token = token?.data
-  } else {
-    token = await FAPI.getTenantToken()
-    token.indate = new Date().getTime() + token.expire * 1000
-    await db.collection('Meta').doc(`${key}_token`).set(token)
-  }
-  FAPI.setToken(token)
-
-  // 避免冗余事件
-  if (body?.header?.event_id) {
-    const _event = (await db.collection('Events').doc(body.header.event_id).get()).data
-    if (_event) {
-      return 'has event'
-    } else {
-      db.collection('Events').doc(body.header.event_id).set(body.event.message)
-    }
-  }
+  const questionMessage = await FAPI.message.sendCard(webhook, {
+    config: { wide_screen_mode: true },
+    header: {
+      template: 'green',
+      title: { content: `📅   greptimedb on GitHub [${dayjs.tz().format('HH:mm')}]`, tag: 'plain_text' },
+    },
+    elements: FAPI.tools.makeElements(
+      [
+        [
+          `column_set`,
+          [`**⭐  Star\n${detail.stargazers_count}**|center`],
+          [`**🔥  Fork\n${detail.forks_count}**|center`],
+          [`**🫵  Issue\n${detail.forks_count}**|center`],
+          [`**🙏  PR\n${pr.length}**|center`],
+        ],
+      ],
+      { withoutAt: true }
+    ),
+  })
+  
+  return {}
 }
