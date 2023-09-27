@@ -1,0 +1,10 @@
+{
+  "name": "ocr",
+  "runtime": "node/v18",
+  "retion": "US",
+  "envs": [
+    "app_id",
+    "app_secret"
+  ],
+  "typescript": false
+}

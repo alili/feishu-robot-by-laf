@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "aircode": "0.7.0",
+    "feishu-sdk": "2.2.23",
+    "image-to-base64": "2.2.0"
+  }
+}
